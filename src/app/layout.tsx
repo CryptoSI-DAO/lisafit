@@ -7,6 +7,11 @@ export const metadata: Metadata = {
   title: "LisaFit — Train with Lisa",
   description: "Daily AI-powered workouts. Score yourself. Beat your best.",
   manifest: "/manifest.json",
+  openGraph: {
+    title: "LisaFit — Train with Lisa",
+    description: "Daily AI-powered workouts. Score yourself. Beat your best.",
+    images: ["/og-image.png"],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

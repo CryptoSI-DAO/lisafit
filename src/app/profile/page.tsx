@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { BottomNav } from "@/components/bottom-nav";
 import { Logo } from "@/components/logo";
+import { InstallButton } from "@/components/install-button";
 
 export default function ProfilePage() {
   const { user, loading, signOut } = useAuth();
@@ -67,6 +68,14 @@ export default function ProfilePage() {
             <FutureRow icon="👥" label="Friends & leaderboards" />
             <FutureRow icon="📊" label="Detailed analytics" />
           </div>
+        </div>
+
+        {/* Install as PWA */}
+        <div className="mt-8">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-[#888]">
+            Install App
+          </h2>
+          <InstallButton />
         </div>
 
         {/* Sign out */}

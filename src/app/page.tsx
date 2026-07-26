@@ -1,4 +1,5 @@
 import { Logo } from "@/components/logo";
+import Image from "next/image";
 import Link from "next/link";
 
 export default function LandingPage() {
@@ -10,7 +11,18 @@ export default function LandingPage() {
           <Logo size={56} />
         </div>
 
-        <h1 className="mt-12 text-4xl font-bold tracking-tight sm:text-5xl">
+        {/* Hero image */}
+        <div className="relative mt-8 h-64 w-48 overflow-hidden rounded-2xl border border-[#2a2a2a]">
+          <Image
+            src="/hero.png"
+            alt="Athlete training"
+            fill
+            className="object-cover"
+            priority
+          />
+        </div>
+
+        <h1 className="mt-8 text-4xl font-bold tracking-tight sm:text-5xl">
           TRAIN WITH <span className="text-[#e7f900] text-glow">LISA</span>
         </h1>
 
