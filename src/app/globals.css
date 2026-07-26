@@ -1,26 +1,51 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-lisa-yellow: #e7f900;
+  --color-lisa-yellow-dim: #c5d400;
+  --color-lisa-black: #111111;
+  --color-lisa-dark: #0a0a0a;
+  --color-lisa-gray: #1e1e1e;
+  --color-lisa-card: #161616;
+  --color-lisa-border: #2a2a2a;
+  --color-lisa-muted: #888888;
+
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background-color: var(--color-lisa-dark);
+    color: #ffffff;
+    font-family: var(--font-display);
+    overscroll-behavior: none;
+  }
+
+  /* Safe area insets for mobile */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .text-glow {
+    text-shadow: 0 0 20px rgba(231, 249, 0, 0.3);
+  }
+  .card-glow {
+    box-shadow: 0 0 40px rgba(231, 249, 0, 0.08);
+  }
+}
+
+/* Hide scrollbar for clean mobile feel */
+::-webkit-scrollbar {
+  width: 0;
+  display: none;
 }
