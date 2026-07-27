@@ -1,109 +1,48 @@
 /**
- * Daily Workout Generation Engine
+ * @fileoverview Daily Workout Generation Engine
  *
- * Determines day type (easy/normal/tough/rest) based on day of week,
- * then selects exercises weighted by difficulty and muscle group diversity.
+ * Pure functions that determine day type and select exercises.
+ * No database access — takes exercise list in, returns generated workout out.
  *
- * Week structure (Monday-Sunday):
- *   Mon: normal   (start the week strong)
- *   Tue: tough    (high intensity)
- *   Wed: easy     (active recovery)
- *   Thu: normal   (build)
- *   Fri: tough    (end strong)
- *   Sat: easy     (light)
- *   Sun: rest     (full recovery)
+ * Seeded by date so the same date always produces the same workout
+ * for all users. This ensures fairness in future leaderboard features.
  */
 
-export type DayType = "easy" | "normal" | "tough" | "rest";
+import type {
+  DayType,
+  Exercise,
+  GeneratedExercise,
+  GeneratedWorkout,
+} from "./types";
+import {
+  DAY_SCHEDULE,
+  DAY_TYPE_CONFIG,
+  DIFFICULTY_DISTRIBUTION,
+  TARGET_MULTIPLIERS,
+} from "./constants";
 
-export type Exercise = {
-  id: string;
-  name: string;
-  muscle_group: string;
-  unit: string;
-  base_target: number;
-  difficulty: string;
-  description: string | null;
-};
-
-export type ExerciseLog = {
-  exercise_id: string;
-  exercise_name: string;
-  unit: string;
-  target: number;
-  position: number;
-};
-
-const DAY_SCHEDULE: Record<number, DayType> = {
-  1: "normal", // Monday
-  2: "tough", // Tuesday
-  3: "easy", // Wednesday
-  4: "normal", // Thursday
-  5: "tough", // Friday
-  6: "easy", // Saturday
-  0: "rest", // Sunday
-};
-
+/**
+ * Get the workout day type for a given date.
+ * @param date - Defaults to today
+ */
 export function getDayType(date: Date = new Date()): DayType {
   return DAY_SCHEDULE[date.getDay()] ?? "normal";
 }
 
 /**
- * How many exercises per day type
+ * Convert a date to a deterministic numeric seed.
+ * Same date → same seed → same workout everywhere.
  */
-function getExerciseCount(dayType: DayType): number {
-  switch (dayType) {
-    case "easy":
-      return 5;
-    case "normal":
-      return 7;
-    case "tough":
-      return 10;
-    case "rest":
-      return 0;
-  }
+function dateToSeed(date: Date): number {
+  return (
+    date.getFullYear() * 10000 +
+    (date.getMonth() + 1) * 100 +
+    date.getDate()
+  );
 }
 
 /**
- * Difficulty distribution for each day type
- * e.g. normal = 2 easy, 4 normal, 1 hard
- */
-function getDifficultyDistribution(dayType: DayType): {
-  easy: number;
-  normal: number;
-  hard: number;
-} {
-  switch (dayType) {
-    case "easy":
-      return { easy: 3, normal: 2, hard: 0 };
-    case "normal":
-      return { easy: 2, normal: 4, hard: 1 };
-    case "tough":
-      return { easy: 1, normal: 5, hard: 4 };
-    case "rest":
-      return { easy: 0, normal: 0, hard: 0 };
-  }
-}
-
-/**
- * Adjust target reps/time based on day difficulty multiplier
- */
-function adjustTarget(baseTarget: number, dayType: DayType): number {
-  switch (dayType) {
-    case "easy":
-      return Math.round(baseTarget * 0.7);
-    case "normal":
-      return baseTarget;
-    case "tough":
-      return Math.round(baseTarget * 1.3);
-    case "rest":
-      return 0;
-  }
-}
-
-/**
- * Seeded random shuffle (deterministic per date)
- * Same date = same workout for all users that day
+ * Seeded Fisher-Yates shuffle (deterministic per seed).
  */
 function seededShuffle<T>(array: T[], seed: number): T[] {
   const result = [...array];
@@ -111,7 +50,7 @@ function seededShuffle<T>(array: T[], seed: number): T[] {
   let t: T;
   let i: number;
 
-  // Simple LCG seeded random
+  // Linear Congruential Generator
   let rng = seed;
   const random = () => {
     rng = (rng * 9301 + 49297) % 233280;
@@ -129,34 +68,59 @@ function seededShuffle<T>(array: T[], seed: number): T[] {
 }
 
 /**
- * Convert a date to a numeric seed
+ * Pick exercises from a pool, prioritizing muscle group diversity.
+ * Falls back to allowing repeat muscle groups if not enough unique ones.
  */
-function dateToSeed(date: Date): number {
-  return (
-    date.getFullYear() * 10000 +
-    (date.getMonth() + 1) * 100 +
-    date.getDate()
-  );
+function pickExercises(
+  pool: Exercise[],
+  count: number,
+  usedMuscleGroups: Set<string>
+): Exercise[] {
+  const picked: Exercise[] = [];
+
+  // First pass: prefer unused muscle groups
+  for (const ex of pool) {
+    if (picked.length >= count) break;
+    if (!usedMuscleGroups.has(ex.muscle_group)) {
+      picked.push(ex);
+      usedMuscleGroups.add(ex.muscle_group);
+    }
+  }
+
+  // Second pass: fill remaining slots (allow repeats)
+  if (picked.length < count) {
+    for (const ex of pool) {
+      if (picked.length >= count) break;
+      if (!picked.includes(ex)) picked.push(ex);
+    }
+  }
+
+  return picked;
 }
 
 /**
- * Generate a workout for a specific date
+ * Generate a workout for a specific date.
+ *
+ * @param allExercises - Active exercises from the database
+ * @param date - Which day to generate for (defaults to today)
+ * @returns Day type + generated exercise list with adjusted targets
  */
 export function generateWorkout(
   allExercises: Exercise[],
   date: Date = new Date()
-): { dayType: DayType; exercises: ExerciseLog[] } {
+): GeneratedWorkout {
   const dayType = getDayType(date);
-  const count = getExerciseCount(dayType);
+  const targetCount = DAY_TYPE_CONFIG[dayType].exerciseCount;
 
-  if (dayType === "rest" || count === 0) {
+  if (dayType === "rest" || targetCount === 0) {
     return { dayType: "rest", exercises: [] };
   }
 
-  const dist = getDifficultyDistribution(dayType);
+  const dist = DIFFICULTY_DISTRIBUTION[dayType];
   const seed = dateToSeed(date);
+  const multiplier = TARGET_MULTIPLIERS[dayType];
 
-  // Group exercises by difficulty
+  // Group and shuffle exercises by difficulty
   const byDifficulty = {
     easy: seededShuffle(
       allExercises.filter((e) => e.difficulty === "easy"),
@@ -172,48 +136,23 @@ export function generateWorkout(
     ),
   };
 
-  // Pick exercises ensuring muscle group diversity
-  const picked: Exercise[] = [];
-  const usedMuscleGroups: string[] = [];
-
-  const pickFromGroup = (
-    pool: Exercise[],
-    n: number
-  ): Exercise[] => {
-    const result: Exercise[] = [];
-    for (const ex of pool) {
-      if (result.length >= n) break;
-      // Prefer exercises from unused muscle groups
-      if (!usedMuscleGroups.includes(ex.muscle_group) || result.length === 0) {
-        result.push(ex);
-        if (!usedMuscleGroups.includes(ex.muscle_group)) {
-          usedMuscleGroups.push(ex.muscle_group);
-        }
-      }
-    }
-    // If we didn't get enough (muscle group constraint), just fill
-    if (result.length < n) {
-      for (const ex of pool) {
-        if (result.length >= n) break;
-        if (!result.includes(ex)) result.push(ex);
-      }
-    }
-    return result;
-  };
-
-  picked.push(...pickFromGroup(byDifficulty.easy, dist.easy));
-  picked.push(...pickFromGroup(byDifficulty.normal, dist.normal));
-  picked.push(...pickFromGroup(byDifficulty.hard, dist.hard));
+  // Pick with muscle group diversity
+  const usedMuscleGroups = new Set<string>();
+  const picked: Exercise[] = [
+    ...pickExercises(byDifficulty.easy, dist.easy, usedMuscleGroups),
+    ...pickExercises(byDifficulty.normal, dist.normal, usedMuscleGroups),
+    ...pickExercises(byDifficulty.hard, dist.hard, usedMuscleGroups),
+  ];
 
   // Final shuffle for exercise order
   const finalOrder = seededShuffle(picked, seed + 99);
 
-  // Build exercise logs with adjusted targets
-  const exercises: ExerciseLog[] = finalOrder.map((ex, i) => ({
+  // Build generated exercise data with adjusted targets
+  const exercises: GeneratedExercise[] = finalOrder.map((ex, i) => ({
     exercise_id: ex.id,
     exercise_name: ex.name,
     unit: ex.unit,
-    target: adjustTarget(ex.base_target, dayType),
+    target: Math.round(ex.base_target * multiplier),
     position: i,
   }));
 

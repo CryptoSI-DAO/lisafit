@@ -2,74 +2,51 @@
 
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { useRequireAuth } from "@/lib/use-require-auth";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase-client";
 import { BottomNav } from "@/components/bottom-nav";
-
-type WorkoutHistory = {
-  id: string;
-  workout_date: string;
-  day_type: string;
-  status: string;
-  total_score: number;
-};
+import { LoadingScreen } from "@/components/loading-screen";
+import { StatCard, WeeklyChart, HistoryRow } from "@/components/history";
+import type { WorkoutHistoryEntry } from "@/lib/types";
 
 export default function HistoryPage() {
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
+  const authLoading = useRequireAuth();
   const router = useRouter();
-  const [workouts, setWorkouts] = useState<WorkoutHistory[]>([]);
+  const [workouts, setWorkouts] = useState<WorkoutHistoryEntry[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
-
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/auth/signin");
-    }
-  }, [user, loading, router]);
 
   useEffect(() => {
     if (!user) return;
     const userId = user.id;
-    async function fetchHistory() {
-      const { data } = await supabase
-        .from("daily_workouts")
-        .select("id, workout_date, day_type, status, total_score")
-        .eq("user_id", userId)
-        .order("workout_date", { ascending: false })
-        .limit(28);
-
-      setWorkouts(data || []);
-      setDataLoading(false);
-    }
-    fetchHistory();
+    supabase
+      .from("daily_workouts")
+      .select("id, workout_date, day_type, status, total_score")
+      .eq("user_id", userId)
+      .order("workout_date", { ascending: false })
+      .limit(28)
+      .then(({ data }) => {
+        setWorkouts((data as WorkoutHistoryEntry[]) || []);
+        setDataLoading(false);
+      });
   }, [user]);
 
-  if (loading || dataLoading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a]">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#e7f900] border-t-transparent" />
-      </main>
-    );
-  }
+  if (authLoading || dataLoading) return <LoadingScreen />;
+  if (!user) return <LoadingScreen />;
 
-  if (!user) return null;
-
-  // Calculate stats
+  // ─── Calculate stats ─────────────────────────────────
   const completed = workouts.filter((w) => w.status === "completed");
   const totalScore = completed.reduce((s, w) => s + w.total_score, 0);
-  const totalExercises = completed.length;
 
-  // Current streak (consecutive completed days)
+  // Streak: consecutive completed days (most recent first)
   let streak = 0;
-  const sortedByDate = [...workouts].sort(
-    (a, b) => new Date(b.workout_date).getTime() - new Date(a.workout_date).getTime()
-  );
-  for (const w of sortedByDate) {
+  for (const w of workouts) {
     if (w.status === "completed") streak++;
     else if (w.status === "skipped") break;
-    // pending days don't break the streak (not yet attempted)
   }
 
-  // This week's score (Mon-Fri)
+  // This week (Mon-Fri)
   const now = new Date();
   const dayOfWeek = now.getDay();
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
@@ -83,8 +60,7 @@ export default function HistoryPage() {
     .reduce((s, w) => s + w.total_score, 0);
   const weekDays = thisWeek.filter((w) => w.status === "completed").length;
 
-  // Best single exercise scores
-  const avgScore = totalExercises > 0 ? Math.round(totalScore / totalExercises) : 0;
+  const avgScore = completed.length > 0 ? Math.round(totalScore / completed.length) : 0;
 
   return (
     <main className="min-h-screen bg-[#0a0a0a] px-6 pt-12 pb-24">
@@ -108,7 +84,7 @@ export default function HistoryPage() {
           <StatCard
             label="Total Score"
             value={totalScore.toLocaleString()}
-            suffix={`${totalExercises} workouts`}
+            suffix={`${completed.length} workouts`}
             color="#6366f1"
           />
           <StatCard
@@ -119,7 +95,7 @@ export default function HistoryPage() {
           />
         </div>
 
-        {/* Weekly bar chart */}
+        {/* Weekly chart */}
         <div className="mt-6">
           <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-[#888]">
             This Week
@@ -147,126 +123,5 @@ export default function HistoryPage() {
       </div>
       <BottomNav />
     </main>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  suffix,
-  color,
-}: {
-  label: string;
-  value: string;
-  suffix: string;
-  color: string;
-}) {
-  return (
-    <div className="rounded-xl border border-[#2a2a2a] bg-[#161616] p-4">
-      <p className="text-[0.6rem] uppercase tracking-wider text-[#888]">{label}</p>
-      <p className="mt-1 text-2xl font-bold" style={{ color }}>
-        {value}
-      </p>
-      <p className="text-[0.6rem] text-[#555]">{suffix}</p>
-    </div>
-  );
-}
-
-function WeeklyChart({ workouts }: { workouts: WorkoutHistory[] }) {
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-
-  const dayData = days.map((day, i) => {
-    const date = new Date(now);
-    date.setDate(now.getDate() + mondayOffset + i);
-    const dateStr = date.toISOString().split("T")[0];
-    const workout = workouts.find((w) => w.workout_date === dateStr);
-
-    return {
-      day,
-      score: workout?.status === "completed" ? workout.total_score : 0,
-      completed: workout?.status === "completed",
-      isToday: dateStr === now.toISOString().split("T")[0],
-    };
-  });
-
-  const maxScore = Math.max(...dayData.map((d) => d.score), 700);
-
-  const dayColors: Record<string, string> = {
-    easy: "#22c55e",
-    normal: "#e7f900",
-    tough: "#f85149",
-    rest: "#6366f1",
-  };
-
-  return (
-    <div className="flex h-32 items-end justify-between gap-1.5 rounded-xl border border-[#2a2a2a] bg-[#161616] px-4 py-3">
-      {dayData.map((d) => (
-        <div key={d.day} className="flex flex-1 flex-col items-center gap-1">
-          <div className="flex w-full flex-1 items-end">
-            <div
-              className={`w-full rounded-t-md transition-all ${
-                d.completed ? "opacity-100" : "opacity-20"
-              } ${d.isToday ? "ring-1 ring-[#e7f900]" : ""}`}
-              style={{
-                height: d.score > 0 ? `${Math.max((d.score / maxScore) * 100, 8)}%` : "4px",
-                backgroundColor: d.score > 0 ? "#e7f900" : "#2a2a2a",
-              }}
-            />
-          </div>
-          <span className={`text-[0.55rem] ${d.isToday ? "font-bold text-[#e7f900]" : "text-[#555]"}`}>
-            {d.day}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function HistoryRow({ workout }: { workout: WorkoutHistory }) {
-  const date = new Date(workout.workout_date);
-  const dateStr = date.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-
-  const dayColors: Record<string, string> = {
-    easy: "#22c55e",
-    normal: "#e7f900",
-    tough: "#f85149",
-    rest: "#6366f1",
-  };
-
-  const color = dayColors[workout.day_type] || "#888";
-
-  const statusLabel =
-    workout.status === "completed"
-      ? `${workout.total_score} pts`
-      : workout.status === "skipped"
-      ? "Skipped"
-      : "Pending";
-
-  return (
-    <div className="flex items-center justify-between rounded-xl border border-[#2a2a2a] bg-[#161616] px-4 py-3">
-      <div className="flex items-center gap-3">
-        <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-        <div>
-          <p className="text-sm font-medium">{dateStr}</p>
-          <p className="text-[0.6rem] uppercase tracking-wider text-[#555]">
-            {workout.day_type}
-          </p>
-        </div>
-      </div>
-      <span
-        className={`font-mono text-sm font-bold ${
-          workout.status === "completed" ? "text-[#e7f900]" : "text-[#555]"
-        }`}
-      >
-        {statusLabel}
-      </span>
-    </div>
   );
 }

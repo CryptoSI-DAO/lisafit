@@ -1,67 +1,59 @@
+/**
+ * @fileoverview Database operations for workouts and exercise logs.
+ *
+ * This is the only layer that talks to Supabase for workout data.
+ * Pages and components import from here — never query Supabase directly.
+ */
+
 import { supabase } from "./supabase-client";
-import { generateWorkout, type Exercise, type ExerciseLog } from "./workout-engine";
-
-export type WorkoutWithLogs = {
-  id: string;
-  workout_date: string;
-  day_type: string;
-  status: string;
-  total_score: number;
-  completed_at: string | null;
-  exercise_logs: ExerciseLogWithId[];
-};
-
-export type ExerciseLogWithId = {
-  id: string;
-  exercise_id: string;
-  exercise_name: string;
-  unit: string;
-  target: number;
-  actual: number;
-  score: number;
-  completed: boolean;
-  position: number;
-};
+import { generateWorkout } from "./workout-engine";
+import { scoreExercise, sumScores } from "./scoring";
+import type {
+  Exercise,
+  ExerciseLog,
+  Workout,
+  WorkoutWithLogs,
+  WorkoutHistoryEntry,
+} from "./types";
 
 /**
- * Get or create today's workout for the current user
+ * Get today's workout for a user. If it doesn't exist yet,
+ * generate and persist it automatically.
  */
-export async function getTodaysWorkout(userId: string): Promise<WorkoutWithLogs | null> {
+export async function getTodaysWorkout(
+  userId: string
+): Promise<WorkoutWithLogs | null> {
   const today = new Date().toISOString().split("T")[0];
 
-  // Check if workout already exists for today
+  // 1. Check if workout already exists for today
   const { data: existing } = await supabase
     .from("daily_workouts")
-    .select(
-      `
-      *,
-      exercise_logs (*)
-    `
-    )
+    .select("*, exercise_logs (*)")
     .eq("user_id", userId)
     .eq("workout_date", today)
     .single();
 
   if (existing) {
-    return {
-      ...existing,
-      exercise_logs: existing.exercise_logs.sort((a: ExerciseLogWithId, b: ExerciseLogWithId) => a.position - b.position),
-    };
+    const sorted = (existing.exercise_logs as ExerciseLog[]).sort(
+      (a, b) => a.position - b.position
+    );
+    return { ...(existing as Workout), exercise_logs: sorted };
   }
 
-  // Need to generate a new workout
-  // 1. Fetch all active exercises
+  // 2. Fetch active exercises
   const { data: exercises } = await supabase
     .from("exercises")
-    .select("id, name, muscle_group, unit, base_target, difficulty, description")
+    .select("id, name, muscle_group, unit, base_target, difficulty, description, is_active")
     .eq("is_active", true);
 
   if (!exercises || exercises.length === 0) return null;
 
-  // 2. Generate workout
-  const { dayType, exercises: generated } = generateWorkout(exercises as Exercise[]);
+  // 3. Generate workout plan
+  const { dayType, exercises: generated } = generateWorkout(
+    exercises as Exercise[]
+  );
 
-  // 3. Insert daily_workout
+  // 4. Insert daily_workout record
   const { data: workout, error } = await supabase
     .from("daily_workouts")
     .insert({
@@ -76,7 +68,7 @@ export async function getTodaysWorkout(userId: string): Promise<WorkoutWithLogs 
 
   if (error || !workout) return null;
 
-  // 4. Insert exercise logs (skip if rest day)
+  // 5. Insert exercise logs (skip if rest day)
   if (generated.length > 0) {
     const logsToInsert = generated.map((log) => ({
       workout_id: workout.id,
@@ -89,36 +81,39 @@ export async function getTodaysWorkout(userId: string): Promise<WorkoutWithLogs 
       .select();
 
     return {
-      ...workout,
-      exercise_logs: (insertedLogs || []).sort((a, b) => a.position - b.position),
+      ...(workout as Workout),
+      exercise_logs: (insertedLogs as ExerciseLog[]) || [],
     };
   }
 
-  return { ...workout, exercise_logs: [] };
+  return { ...(workout as Workout), exercise_logs: [] };
 }
 
 /**
- * Score an exercise: 0-100 based on actual vs target
- *
- * Scoring formula:
- *   actual >= target: 100 (maxed out)
- *   actual < target: proportional, but minimum 0
- *   actual = 0: 0
+ * Get recent workout history for the dashboard.
  */
-export function scoreExercise(actual: number, target: number): number {
-  if (target <= 0) return 0;
-  const raw = (actual / target) * 100;
-  return Math.min(100, Math.max(0, Math.round(raw)));
+export async function getWorkoutHistory(
+  userId: string,
+  limit = 28
+): Promise<WorkoutHistoryEntry[]> {
+  const { data } = await supabase
+    .from("daily_workouts")
+    .select("id, workout_date, day_type, status, total_score")
+    .eq("user_id", userId)
+    .order("workout_date", { ascending: false })
+    .limit(limit);
+
+  return (data as WorkoutHistoryEntry[]) || [];
 }
 
 /**
- * Update an exercise log with the user's result
+ * Save a user's result for a single exercise.
+ * Returns the computed score or null on failure.
  */
 export async function updateExerciseLog(
   logId: string,
   actual: number
 ): Promise<{ score: number } | null> {
-  // Fetch current log to get target
   const { data: log } = await supabase
     .from("exercise_logs")
     .select("target")
@@ -131,11 +126,7 @@ export async function updateExerciseLog(
 
   const { error } = await supabase
     .from("exercise_logs")
-    .update({
-      actual,
-      score,
-      completed: true,
-    })
+    .update({ actual, score, completed: true })
     .eq("id", logId);
 
   if (error) return null;
@@ -143,26 +134,27 @@ export async function updateExerciseLog(
 }
 
 /**
- * Mark a workout as completed and calculate total score
+ * Mark a workout as completed and compute the total score.
  */
 export async function completeWorkout(workoutId: string): Promise<number> {
-  // Sum all exercise scores
   const { data: logs } = await supabase
     .from("exercise_logs")
     .select("score")
     .eq("workout_id", workoutId);
 
   if (!logs || logs.length === 0) {
-    // rest day or no exercises
     await supabase
       .from("daily_workouts")
-      .update({ status: "completed", completed_at: new Date().toISOString(), total_score: 0 })
+      .update({
+        status: "completed",
+        completed_at: new Date().toISOString(),
+        total_score: 0,
+      })
       .eq("id", workoutId);
     return 0;
   }
 
-  // Average score * number of exercises = daily score out of (count * 100)
-  const totalScore = logs.reduce((sum, l) => sum + l.score, 0);
+  const totalScore = sumScores(logs.map((l) => l.score));
 
   await supabase
     .from("daily_workouts")

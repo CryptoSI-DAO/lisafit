@@ -4,6 +4,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import { ServiceWorkerRegister } from "@/components/sw-register";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://lisafit.vercel.app"),
   title: "LisaFit — Train with Lisa",
   description: "Daily AI-powered workouts. Score yourself. Beat your best.",
   manifest: "/manifest.json",
